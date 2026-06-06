@@ -1,0 +1,548 @@
+=== FILE: ./Makefile ===
+CC=gcc
+LD=gcc
+
+# -fno-stack-protector убирает ошибку __stack_chk_fail_local
+# -fno-builtin запрещает GCC подменять циклы встроенными функциями деления
+# -fno-pic отключает генерацию позиционно-независимого кода, ломающего адреса ядра
+CFLAGS=-m32 -ffreestanding -O2 -Wall -Wextra -fno-stack-protector -fno-builtin -fno-pic -fno-pie -mno-sse -mno-mmx
+
+# -Wl,--no-warn-rwx-segments отключает предупреждение линкера о правах сегментов
+# -Wl,-z,max-page-size=0x1000 жестко выравнивает секции по стандарту Multiboot (4КБ)
+LDFLAGS=-m32 -T linker.ld -ffreestanding -nostdlib -no-pie -Wl,--no-warn-rwx-segments -Wl,-z,max-page-size=0x1000
+
+all: os.iso
+
+boot.o: boot.asm
+	nasm -f elf32 boot.asm -o boot.o
+
+kernel.o: kernel.c
+	$(CC) $(CFLAGS) -c kernel.c -o kernel.o
+
+shell.o: shell/shell.c
+	$(CC) $(CFLAGS) -c shell/shell.c -o shell.o
+
+commands.o: shell/commands.c
+	$(CC) $(CFLAGS) -c shell/commands.c -o commands.o
+
+keyboard.o: drivers/keyboard.c
+	$(CC) $(CFLAGS) -c drivers/keyboard.c -o keyboard.o
+
+kernel.bin: boot.o kernel.o shell.o commands.o keyboard.o
+	$(LD) $(LDFLAGS) \
+	boot.o \
+	kernel.o \
+	shell.o \
+	commands.o \
+	keyboard.o \
+	-o kernel.bin
+
+os.iso: kernel.bin
+	mkdir -p iso/boot/grub
+	cp kernel.bin iso/boot/kernel.bin
+	cp grub.cfg iso/boot/grub/grub.cfg
+	grub-mkrescue -o os.iso iso
+
+run: os.iso
+	qemu-system-i386 -m 64M -cdrom os.iso -d int,guest_errors,cpu_reset -no-reboot -no-shutdown
+
+clean:
+	rm -rf *.o *.bin *.iso iso
+	rm -f shell/*.o
+	rm -f drivers/*.o
+
+\n
+=== FILE: ./boot.asm ===
+section .multiboot
+align 4
+    dd 0x1BADB002
+    dd 0x00
+    dd -(0x1BADB002 + 0x00)
+
+section .text
+global _start
+extern kernel_main
+
+_start:
+    cli
+    call kernel_main
+
+.hang:
+    hlt
+    jmp .hang
+\n
+=== FILE: ./kernel.c ===
+#include "shell/shell.h"
+
+void kernel_main(void)
+{
+    shell_start();
+
+    while (1)
+    {
+        __asm__ volatile("hlt");
+    }
+}
+\n
+=== FILE: ./drivers/keyboard.h ===
+#ifndef KEYBOARD_H
+#define KEYBOARD_H
+
+char keyboard_getchar();
+
+#endif
+\n
+=== FILE: ./drivers/keyboard.c ===
+#include "keyboard.h"
+
+static inline unsigned char inb(unsigned short port)
+{
+    unsigned char result;
+
+    __asm__ volatile (
+        "inb %1, %0"
+        : "=a"(result)
+        : "Nd"(port)
+    );
+
+    return result;
+}
+
+static const char keymap[128] =
+{
+    0,  27, '1','2','3','4','5','6','7','8','9','0',
+    '-', '=', '\b', '\t',
+    'q','w','e','r','t','y','u','i','o','p', '[',']', '\n',
+    0, /* 29 - Control */
+    'a','s','d','f','g','h','j','k','l', ';','\'','`',
+    0, /* 42 - Left Shift */
+    '\\', 'z','x','c','v','b','nных','m', ',', '.', '/', 
+    0, /* 54 - Right Shift */
+    '*', /* 55 - Звездочка (*) на NumPad */
+    0,   /* 56 - Alt */
+    ' ', /* 57 - Пробел */
+    0,0,0,0,0,0,0,0,0,0, /* 58-67 - Клавиши F1-F10 */
+    0,   /* 68 - NumLock */
+    0,   /* 69 - ScrollLock */
+    0,   /* 70 - Home */
+    0,   /* 71 - Up Arrow */
+    0,   /* 72 - Page Up */
+    '-', /* 73 - В некоторых клонах, пустая ячейка */
+    '-', /* 74 - СТРОГО СЮДА: Минус (-) на NumPad */
+    0,   /* 75 - Left Arrow */
+    0,   /* 76 - Center */
+    0,   /* 77 - Right Arrow */
+    '+', /* 78 - СТРОГО СЮДА: Плюс (+) на NumPad */
+};
+
+char keyboard_getchar()
+{
+    unsigned char scancode;
+
+    while (1)
+    {
+        /* Ждём, пока контроллер сообщит,
+           что данные готовы */
+        while (!(inb(0x64) & 1))
+        {
+        }
+
+        scancode = inb(0x60);
+
+        /* Игнорируем отпускание клавиши */
+        if (scancode & 0x80)
+        {
+            continue;
+        }
+
+        if (scancode < 128)
+        {
+            char c = keymap[scancode];
+
+            if (c)
+            {
+                return c;
+            }
+        }
+    }
+}
+\n
+=== FILE: ./shell/shell.h ===
+#ifndef SHELL_H
+#define SHELL_H
+
+// Настоящий bare-metal макрос. Физически вшивает asm-код в каждый файл
+#define outb(port, val) __asm__ volatile ("outb %b0, %w1" : : "a"(val), "Nd"(port))
+
+void shell_start();
+
+void print(const char* str);
+void newline();
+void clear_screen();
+void putchar(char c);
+
+#endif
+
+\n
+=== FILE: ./shell/shell.c ===
+#include "shell.h"
+#include "commands.h"
+#include "../drivers/keyboard.h"
+
+static volatile char* video = (volatile char*)0xB8000;
+static int cursor = 0;
+char command_buffer[128];
+
+// ФУНКЦИЮ outb ОТСЮДА ПОЛНОСТЬЮ СТЕРЛИ!
+
+void disable_cursor()
+{
+    outb(0x3D4, 0x0A);
+    outb(0x3D5, 0x20);
+}
+
+void putchar(char c)
+{
+    video[cursor++] = c;
+    video[cursor++] = 0x0F;
+}
+
+void print(const char* str)
+{
+    while (*str)
+    {
+        putchar(*str++);
+    }
+}
+
+void newline()
+{
+    // Рассчитываем текущую строку на основе глобального курсора
+    int current_row = cursor / 160;
+    
+    // Переходим на следующую строку
+    current_row++;
+
+    // Если вылезли за пределы экрана (25 строк)
+    if (current_row >= 25)
+    {
+        clear_screen(); // Очистит экран и САМА сбросит cursor в 0
+    }
+    else
+    {
+        // Если экран еще не полон, просто выставляем курсор на начало новой строки
+        cursor = current_row * 160;
+    }
+}
+
+void clear_screen()
+{
+    for (int i = 0; i < 80 * 25; i++)
+    {
+        video[i * 2] = ' ';
+        video[i * 2 + 1] = 0x0F;
+    }
+    cursor = 0;
+}
+
+static void prompt()
+{
+    print("MyOS> ");
+}
+
+void shell_start()
+{
+    disable_cursor();
+    clear_screen();
+
+    print("MyOS v0.3");
+    newline();
+    newline();
+
+    while (1)
+    {
+        int pos = 0;
+        for (int i = 0; i < 128; i++) command_buffer[i] = 0;
+
+        prompt();
+
+        while (1)
+        {
+            char c = keyboard_getchar();
+
+            if (c == '\n')
+            {
+                command_buffer[pos] = 0;
+                execute_command(command_buffer);
+                newline();
+                break;
+            }
+
+            if (pos < 127)
+            {
+                command_buffer[pos++] = c;
+                putchar(c);
+            }
+        }
+    }
+}
+
+\n
+=== FILE: ./shell/commands.h ===
+#ifndef COMMANDS_H
+#define COMMANDS_H
+
+void execute_command(char* cmd);
+
+#endif
+
+\n
+=== FILE: ./shell/commands.c ===
+#include "commands.h"
+#include "shell.h"
+extern void print(const char* str);
+extern void newline();
+extern void clear_screen();
+extern void putchar(char c);
+extern char keyboard_getchar();
+
+// Безопасный перевод строки в число через сдвиги
+static int custom_atoi(const char* str) {
+    int res = 0;
+    int sign = 1;
+    if (*str == '-') {
+        sign = -1;
+        str++;
+    }
+    while (*str) {
+        if (*str < '0' || *str > '9') break;
+        res = (res << 3) + (res << 1) + (*str - '0');
+        str++;
+    }
+    return res * sign;
+}
+
+// Безопасный перевод числа в строку через вычитания
+static void custom_itoa(int num, char* str) {
+    int i = 0;
+    int is_negative = 0;
+
+    if (num == 0) {
+        str[i++] = '0';
+        str[i] = '\0';
+        return;
+    }
+
+    if (num < 0) {
+        is_negative = 1;
+        if (num == -2147483648) {
+            char* min_int = "-2147483648";
+            while (*min_int) str[i++] = *min_int++;
+            str[i] = '\0';
+            return;
+        }
+        num = -num;
+    }
+
+    while (num > 0) {
+        int temp = num;
+        while (temp >= 10) {
+            temp -= 10;
+        }
+        int rem = temp;
+        
+        str[i++] = rem + '0';
+        
+        int new_num = 0;
+        while (num >= 10) {
+            num -= 10;
+            new_num++;
+        }
+        num = new_num;
+    }
+
+    if (is_negative) {
+        str[i++] = '-';
+    }
+    str[i] = '\0';
+
+    int start = 0;
+    int end = i - 1;
+    while (start < end) {
+        char temp = str[start];
+        str[start] = str[end];
+        str[end] = temp;
+        start++;
+        end--;
+    }
+}
+
+static int strcmp(const char* a, const char* b)
+{
+    while (*a && *b)
+    {
+        if (*a != *b)
+            return 0;
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
+void execute_command(char* cmd)
+{
+    if (strcmp(cmd, "help"))
+    {
+        newline();
+        print("help");
+        newline();
+        print("about");
+        newline();
+        print("version");
+        newline();
+        print("calc");
+        newline();
+        print("clear");
+        newline();
+        print("exit");
+        newline();
+    }
+    else if (strcmp(cmd, "about"))
+    {
+        newline();
+        print("MyOS by iQkz");
+        newline();
+    }
+    else if (strcmp(cmd, "version"))
+    {
+        newline();
+        print("MyOS v0.3");
+        newline();
+    }
+    else if (strcmp(cmd, "calc"))
+    {
+        char buf1[16] = {0};
+        char buf2[16] = {0};
+        char op = 0;
+        int p = 0;
+
+        newline(); 
+        print("Enter first number: ");
+        while (1) {
+            char c = keyboard_getchar();
+            if (c == '\n') { 
+                buf1[p] = 0; 
+                break; 
+            }
+            if (((c >= '0' && c <= '9') || (c == '-' && p == 0)) && p < 15) { 
+                buf1[p++] = c; 
+                putchar(c); 
+            }
+        }
+
+        newline(); 
+        print("Enter operator (+, -, *, /): ");
+        while (1) {
+            char c = keyboard_getchar();
+            if (c == '+' || c == '-' || c == '*' || c == '/') { 
+                op = c; 
+                putchar(c); 
+                break; 
+            }
+        }
+
+        p = 0;
+        newline(); 
+        print("Enter second number: ");
+        while (1) {
+            char c = keyboard_getchar();
+            if (c == '\n') { 
+                buf2[p] = 0; 
+                break; 
+            }
+            if (((c >= '0' && c <= '9') || (c == '-' && p == 0)) && p < 15) { 
+                buf2[p++] = c; 
+                putchar(c); 
+            }
+        }
+
+        int num1 = custom_atoi(buf1);
+        int num2 = custom_atoi(buf2);
+        int result = 0;
+
+        if (op == '+') {
+            result = num1 + num2;
+        }
+        else if (op == '-') {
+            result = num1 - num2;
+        }
+        else if (op == '*') {
+            int sign = 1;
+            if (num1 < 0) { sign = -sign; num1 = -num1; }
+            if (num2 < 0) { sign = -sign; num2 = -num2; }
+            for (int m = 0; m < num2; m++) {
+                result += num1;
+            }
+            result *= sign;
+        }
+        else if (op == '/') {
+            if (num2 == 0) {
+                newline(); 
+                print("Error: Division by zero!");
+                newline(); 
+                return;
+            }
+            int sign = 1;
+            if (num1 < 0) { sign = -sign; num1 = -num1; }
+            if (num2 < 0) { sign = -sign; num2 = -num2; }
+            result = 0;
+            while (num1 >= num2) {
+                num1 -= num2;
+                result++;
+            }
+            result *= sign;
+        }
+
+        char res_str[32] = {0};
+        custom_itoa(result, res_str);
+        
+        newline(); 
+        print("Result: ");
+        print(res_str);
+        newline();
+    }
+    else if (strcmp(cmd, "clear"))
+    {
+        clear_screen();
+    }
+    else if (strcmp(cmd, "exit"))
+    {
+        newline();
+        print("Shutting down...");
+        newline();
+
+        // Побайтовый вывод значения 0x2000 для QEMU (0x00 -> 0x604, 0x20 -> 0x605)
+        outb(0x604, 0x00);
+        outb(0x605, 0x20);
+
+        // Побайтовый вывод для VirtualBox (0x00 -> 0xB004, 0x20 -> 0xB005)
+        outb(0xB004, 0x00);
+        outb(0xB005, 0x20);
+
+        // Старый порт завершения QEMU
+        outb(0x501, 0x31);
+
+        while (1)
+        {
+            __asm__ volatile("hlt");
+        }
+    }
+    else
+    {
+        newline();
+        print("Unknown command");
+        newline();
+    }
+}
+
+\n
