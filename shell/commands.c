@@ -6,7 +6,6 @@ extern void clear_screen();
 extern void putchar(char c);
 extern char keyboard_getchar();
 
-// Безопасный перевод строки в число через сдвиги
 static int custom_atoi(const char* str) {
     int res = 0;
     int sign = 1;
@@ -22,7 +21,6 @@ static int custom_atoi(const char* str) {
     return res * sign;
 }
 
-// Безопасный перевод числа в строку через вычитания
 static void custom_itoa(int num, char* str) {
     int i = 0;
     int is_negative = 0;
@@ -116,7 +114,7 @@ void execute_command(char* cmd)
     else if (strcmp(cmd, "version"))
     {
         newline();
-        print("MyOS v0.3");
+        print("MyOS v0.0.3");
         newline();
     }
     else if (strcmp(cmd, "calc"))
