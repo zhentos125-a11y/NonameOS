@@ -6,8 +6,6 @@ static volatile char* video = (volatile char*)0xB8000;
 static int cursor = 0;
 char command_buffer[128];
 
-// ФУНКЦИЮ outb ОТСЮДА ПОЛНОСТЬЮ СТЕРЛИ!
-
 void disable_cursor()
 {
     outb(0x3D4, 0x0A);
@@ -30,20 +28,16 @@ void print(const char* str)
 
 void newline()
 {
-    // Рассчитываем текущую строку на основе глобального курсора
     int current_row = cursor / 160;
     
-    // Переходим на следующую строку
     current_row++;
 
-    // Если вылезли за пределы экрана (25 строк)
     if (current_row >= 25)
     {
-        clear_screen(); // Очистит экран и САМА сбросит cursor в 0
+        clear_screen();
     }
     else
     {
-        // Если экран еще не полон, просто выставляем курсор на начало новой строки
         cursor = current_row * 160;
     }
 }
@@ -68,7 +62,7 @@ void shell_start()
     disable_cursor();
     clear_screen();
 
-    print("MyOS v0.3");
+    print("MyOS v0.0.4");
     newline();
     newline();
 
