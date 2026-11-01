@@ -23,7 +23,7 @@ SECTIONS
 
     .bss BLOCK(4K) : ALIGN(4K)
     {
-        *(.COMMON)
+        *(COMMON)
         *(.bss)
     }
 
@@ -31,8 +31,6 @@ SECTIONS
     /DISCARD/ :
     {
         *(.eh_frame)
-        *(.note.*)
         *(.comment)
     }
 }
-

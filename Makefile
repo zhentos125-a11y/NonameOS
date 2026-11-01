@@ -10,6 +10,8 @@ CFLAGS=-m32 -ffreestanding -O2 -Wall -Wextra -fno-stack-protector -fno-builtin -
 # -Wl,-z,max-page-size=0x1000 жестко выравнивает секции по стандарту Multiboot (4КБ)
 LDFLAGS=-m32 -T linker.ld -ffreestanding -nostdlib -no-pie -Wl,--no-warn-rwx-segments -Wl,-z,max-page-size=0x1000
 
+OBJS=boot.o kernel.o shell.o commands.o keyboard.o gfx.o vfs.o
+
 all: os.iso
 
 boot.o: boot.asm
@@ -27,14 +29,14 @@ commands.o: shell/commands.c
 keyboard.o: drivers/keyboard.c
 	$(CC) $(CFLAGS) -c drivers/keyboard.c -o keyboard.o
 
-kernel.bin: boot.o kernel.o shell.o commands.o keyboard.o
-	$(LD) $(LDFLAGS) \
-	boot.o \
-	kernel.o \
-	shell.o \
-	commands.o \
-	keyboard.o \
-	-o kernel.bin
+gfx.o: gfx/gfx.c
+	$(CC) $(CFLAGS) -c gfx/gfx.c -o gfx.o
+
+vfs.o: fs/vfs.c
+	$(CC) $(CFLAGS) -c fs/vfs.c -o vfs.o
+
+kernel.bin: $(OBJS)
+	$(LD) $(LDFLAGS) $(OBJS) -o kernel.bin
 
 os.iso: kernel.bin
 	mkdir -p iso/boot/grub
@@ -42,11 +44,13 @@ os.iso: kernel.bin
 	cp grub.cfg iso/boot/grub/grub.cfg
 	grub-mkrescue -o os.iso iso
 
+# isa-debug-exit нужен, чтобы команда "exit" в shell реально выключила QEMU
 run: os.iso
-	qemu-system-i386 -m 64M -cdrom os.iso -d int,guest_errors,cpu_reset -no-reboot -no-shutdown
+	qemu-system-i386 -m 64M -cdrom os.iso -device isa-debug-exit,iobase=0xF4,iosize=0x04 -display none -serial stdio
 
 clean:
 	rm -rf *.o *.bin *.iso iso
 	rm -f shell/*.o
 	rm -f drivers/*.o
-
+	rm -f gfx/*.o
+	rm -f fs/*.o

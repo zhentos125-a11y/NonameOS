@@ -10,6 +10,7 @@ void print(const char* str);
 void newline();
 void clear_screen();
 void putchar(char c);
+void cursor_back(void);
+void scroll_up(void);
 
 #endif
-
