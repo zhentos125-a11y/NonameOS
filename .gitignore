@@ -1,4 +1,2 @@
-*.o
-*.bin
-*.iso
-iso/
+*.qcow2
+*.img
