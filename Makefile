@@ -46,7 +46,7 @@ os.iso: kernel.bin
 
 # isa-debug-exit нужен, чтобы команда "exit" в shell реально выключила QEMU
 run: os.iso
-	qemu-system-i386 -m 64M -cdrom os.iso -device isa-debug-exit,iobase=0xF4,iosize=0x04 -display none -serial stdio
+	qemu-system-i386 -m 64M -cdrom os.iso -device isa-debug-exit,iobase=0xF4,iosize=0x04
 
 clean:
 	rm -rf *.o *.bin *.iso iso
