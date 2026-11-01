@@ -48,6 +48,28 @@ os.iso: kernel.bin
 run: os.iso
 	qemu-system-i386 -m 64M -cdrom os.iso -device isa-debug-exit,iobase=0xF4,iosize=0x04
 
+# log: подробное логирование QEMU в файл qemu.log
+#   int          - все прерывания/исключения CPU (паники #UD/#GP/#PF и т.д.)
+#   guest_errors - ошибки гостя (неизвестные порты, баги драйверов)
+#   cpu_reset    - записи о сбросе CPU (если ядро реанимирует машину)
+log: os.iso
+	qemu-system-i386 -m 64M -cdrom os.iso \
+		-device isa-debug-exit,iobase=0xF4,iosize=0x04 \
+		-d int,guest_errors,cpu_reset -D qemu.log
+
+# trace: то же + трассировка каждого исполняемого блока инструкций
+# (очень подробно, сильно замедляет эмуляцию - для отладки зависаний)
+trace: os.iso
+	qemu-system-i386 -m 64M -cdrom os.iso \
+		-device isa-debug-exit,iobase=0xF4,iosize=0x04 \
+		-d int,guest_errors,cpu_reset,exec -D qemu.log
+
+# Логи прямо в терминал (без файла)
+log-console: os.iso
+	qemu-system-i386 -m 64M -cdrom os.iso \
+		-device isa-debug-exit,iobase=0xF4,iosize=0x04 \
+		-d int,guest_errors,cpu_reset
+
 clean:
 	rm -rf *.o *.bin *.iso iso
 	rm -f shell/*.o
