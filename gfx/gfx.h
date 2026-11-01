@@ -10,8 +10,13 @@
 #define GFX_CYAN    0x33CCCC
 #define GFX_RED     0xCC3333
 
-/* Инициализация графики из multiboot_info.
-   Возвращает 0, если фреймбуфер доступен, и -1 в текстовом режиме. */
+/* Инициализация графики.
+   fb_addr/pitch получены boot.asm через VBE (BIOS int 0x10, режим 0x112).
+   Если fb_addr == 0 — остаёмся в текстовом VGA-режиме, возвращаем -1. */
+int gfx_init_vbe(void* fb_addr, unsigned int pitch);
+
+/* Старая инициализация из multiboot_info (не используется: наш GRUB
+   не поддерживает gfx-теги Multiboot). Оставлена для совместимости. */
 int gfx_init(void* mbi_addr);
 
 /* Базовые примитивы */

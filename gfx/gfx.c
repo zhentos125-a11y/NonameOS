@@ -51,6 +51,25 @@ int gfx_init(void* mbi_addr)
     return 0;
 }
 
+/* Инициализация через VBE: boot.asm сам включил режим 0x112 (800x600x32)
+   и передал нам адрес фреймбуфера + pitch. Это обход ограничения старого
+   GRUB, который не понимает бит 0x10 в заголовке Multiboot. */
+int gfx_init_vbe(void* fb_addr, unsigned int pitch)
+{
+    if (fb_addr == 0)
+    {
+        return -1; /* VBE не сработал — текстовый режим */
+    }
+
+    fb = (volatile unsigned int*)fb_addr;
+    fb_width = 800;
+    fb_height = 600;
+    /* Если BIOS вернул странный pitch — чиним дефолтом 800*4 */
+    fb_pitch = (pitch >= 800 * 4) ? (int)pitch : 800 * 4;
+    active = 1;
+    return 0;
+}
+
 int gfx_is_active(void)
 {
     return active;
